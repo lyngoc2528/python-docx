@@ -1,0 +1,156 @@
+from docx import Document
+from docx.shared import Pt, Cm, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
+def add_simple_field(run, instr):
+    r = run._r
+    fldChar1 = OxmlElement('w:fldChar')
+    fldChar1.set(qn('w:fldCharType'), 'begin')
+    r.append(fldChar1)
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = instr
+    r.append(instrText)
+    fldChar2 = OxmlElement('w:fldChar')
+    fldChar2.set(qn('w:fldCharType'), 'separate')
+    r.append(fldChar2)
+    t = OxmlElement('w:t')
+    t.text = "1"
+    r.append(t)
+    fldChar3 = OxmlElement('w:fldChar')
+    fldChar3.set(qn('w:fldCharType'), 'end')
+    r.append(fldChar3)
+
+def add_toc(paragraph, levels="1-3"):
+    p = paragraph._p
+    fld = OxmlElement('w:fldSimple')
+    fld.set(qn('w:instr'), f'TOC \\o "{levels}" \\h \\z \\u')
+    r = OxmlElement('w:r')
+    t = OxmlElement('w:t')
+    t.text = "Mục lục (Right-click → Update Field trong Word)"
+    r.append(t)
+    fld.append(r)
+    p.append(fld)
+
+def add_heading_numbering_linked_to_styles(document):
+    numbering_part = document.part.numbering_part
+    nums = numbering_part.element
+    used_abs = [int(an.get(qn('w:abstractNumId'))) for an in nums.findall(qn('w:abstractNum'))]
+    next_abs_id = max(used_abs) + 1 if used_abs else 1
+    used_num = [int(n.get(qn('w:numId'))) for n in nums.findall(qn('w:num'))]
+    next_num_id = max(used_num) + 1 if used_num else 1
+
+    abstractNum = OxmlElement('w:abstractNum')
+    abstractNum.set(qn('w:abstractNumId'), str(next_abs_id))
+    lvl_texts = ["%1.", "%1.%2.", "%1.%2.%3."]
+    style_names = ["Heading 1", "Heading 2", "Heading 3"]
+    for ilvl in range(3):
+        lvl = OxmlElement('w:lvl')
+        lvl.set(qn('w:ilvl'), str(ilvl))
+        start = OxmlElement('w:start')
+        start.set(qn('w:val'), "1")
+        lvl.append(start)
+        numFmt = OxmlElement('w:numFmt')
+        numFmt.set(qn('w:val'), "decimal")
+        lvl.append(numFmt)
+        lvlText = OxmlElement('w:lvlText')
+        lvlText.set(qn('w:val'), lvl_texts[ilvl])
+        lvl.append(lvlText)
+        lvlJc = OxmlElement('w:lvlJc')
+        lvlJc.set(qn('w:val'), "left")
+        lvl.append(lvlJc)
+        pStyle = OxmlElement('w:pStyle')
+        pStyle.set(qn('w:val'), style_names[ilvl])
+        lvl.append(pStyle)
+        pPr = OxmlElement('w:pPr')
+        ind = OxmlElement('w:ind')
+        ind.set(qn('w:left'), str(360 + ilvl * 360))
+        ind.set(qn('w:hanging'), "180")
+        pPr.append(ind)
+        lvl.append(pPr)
+        abstractNum.append(lvl)
+    nums.append(abstractNum)
+
+    num = OxmlElement('w:num')
+    num.set(qn('w:numId'), str(next_num_id))
+    abstractNumId = OxmlElement('w:abstractNumId')
+    abstractNumId.set(qn('w:val'), str(next_abs_id))
+    num.append(abstractNumId)
+    nums.append(num)
+
+    for style_name, ilvl in {"Heading 1":0, "Heading 2":1, "Heading 3":2}.items():
+        try:
+            st = document.styles[style_name]
+            pPr = st.element.get_or_add_pPr()
+            numPr = OxmlElement('w:numPr')
+            ilvl_el = OxmlElement('w:ilvl')
+            ilvl_el.set(qn('w:val'), str(ilvl))
+            numId_el = OxmlElement('w:numId')
+            numId_el.set(qn('w:val'), str(next_num_id))
+            numPr.append(ilvl_el)
+            numPr.append(numId_el)
+            pPr.append(numPr)
+        except KeyError:
+            pass
+
+    return next_num_id
+
+# Tạo tài liệu
+doc = Document()
+section = doc.sections[0]
+section.top_margin = Cm(2.5)  # đặt lề trên
+section.bottom_margin = Cm(2.5)
+section.left_margin = Cm(3.5)
+section.right_margin = Cm(2.0)
+section.different_first_page_header_footer = True
+
+# Cài đặt font Normal
+normal = doc.styles['Normal']
+normal.font.name = 'Times New Roman'
+normal.font.size = Pt(13)
+rPr = normal.element.get_or_add_rPr()
+rFonts = rPr.find(qn('w:rFonts'))
+if rFonts is None:
+    rFonts = OxmlElement('w:rFonts'); rPr.append(rFonts)
+rFonts.set(qn('w:ascii'), 'Times New Roman')
+rFonts.set(qn('w:hAnsi'), 'Times New Roman')
+rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+
+# Thay đổi style Heading 1/2/3
+for name, sz in [('Heading 1', 14), ('Heading 2', 13), ('Heading 3', 12)]:
+    st = doc.styles[name]
+    st.font.name = 'Times New Roman'
+    st.font.size = Pt(sz)
+    pPr = st.element.get_or_add_pPr()
+    keepNext = OxmlElement('w:keepNext')
+    pPr.append(keepNext)
+    if name == 'Heading 1':
+        pageBreakBefore = OxmlElement('w:pageBreakBefore')
+        pPr.append(pageBreakBefore)
+
+# Gắn numbering cho các Heading
+add_heading_numbering_linked_to_styles(doc)
+
+# --- Trang bìa ---
+title = doc.add_paragraph("TÊN ĐỀ TÀI", style='Title'); title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+subtitle = doc.add_paragraph("Sinh viên: Dương Thanh Huy – Nguyễn Hoài An", style='Subtitle'); subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+# (Bạn có thể thêm logo ở đây bằng add_picture)
+# doc.add_picture('logo.png', width=Inches(1.5))
+
+doc.add_page_break()
+
+# --- Mục lục ---
+doc.add_paragraph("Mục lục", style='Heading 1')
+add_toc(doc.add_paragraph(), "1-3")
+doc.add_page_break()
+
+# --- Nội dung ví dụ ---
+doc.add_paragraph("1. Giới thiệu", style='Heading 1')
+doc.add_paragraph("Nội dung phần giới thiệu ...")
+doc.add_paragraph("1.1 Phần nhỏ", style='Heading 2')
+doc.add_paragraph("Nội dung phần nhỏ ...")
+
+# Lưu file
+doc.save('DeTai_Template_Chinh.docx')
